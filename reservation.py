@@ -255,7 +255,8 @@ class Store:
         records, upcoming = [], []
         for row in intervals:
             record = {"id": row["id"], "m": row["machine_id"], "s": (row["start"] - start) // SLOT,
-                      "e": (row["end"] - start) // SLOT, "operator": row["name"]}
+                      "e": (row["end"] - start) // SLOT, "operator": row["name"],
+                      "operatorId": row["owner_id"], "operatorUsername": row["username"]}
             if row["owner_id"] == actor["id"]:
                 record["owner"] = row["username"]
                 if row["end"] > cutoff:

@@ -56,13 +56,29 @@
   }
 
   function intervalDetail(record) {
-    return status(record)+' · '+range(record)+' · 预约人 '+record.operator;
+    const username = record.operatorUsername;
+    const operator = username && username !== record.operator ? record.operator+'（'+username+'）' : record.operator;
+    return status(record)+' · '+range(record)+' · 预约人 '+operator;
   }
 
-  function block(record, kind, label, detail) {
-    const tooltip = detail ? ' title="'+escape(detail)+'"' : '';
-    return '<div class="block '+kind+'" style="left:'+record.s/48*100+'%;width:'+(record.e-record.s)/48*100+'%"'+tooltip+' aria-hidden="true">' +
+  function blockPosition({s,e}) {
+    return 'left:'+s/48*100+'%;width:'+(e-s)/48*100+'%';
+  }
+
+  function block(record, kind, label) {
+    return '<div class="block '+kind+'" style="'+blockPosition(record)+'" aria-hidden="true">' +
       (record.e-record.s >= 4 ? label : '') + '</div>';
+  }
+
+  function bookingBlock(record) {
+    const state = status(record);
+    const kind = state === '我的预约' ? 'mine' : 'booked';
+    const position = blockPosition({...record,s:Math.max(record.s,pastEnd)});
+    const hue = (200 + (record.operatorId * 137.508) % 270) % 360;
+    const color = Number.isFinite(hue) ? ';--booking-hue:'+hue.toFixed(2) : '';
+    return '<div class="block booking '+kind+'" style="'+position+color+'" title="'+escape(intervalDetail(record))+'" aria-hidden="true">'+
+      '<span class="booking-status">'+state+'</span><span class="booking-owner">'+
+      escape(record.operatorUsername || record.operator)+'</span></div>';
   }
 
   function draftBlock(candidate) {
@@ -77,8 +93,7 @@
     return '<div class="board-row"><div class="machine"><button type="button" data-machine="'+m+'" data-action="select-machine" aria-label="选择 '+escape(name)+' 的时段">'+
       escape(name)+'</button><span class="quiet small">'+escape(ip)+'</span>'+
       (spec?'<span class="quiet small">'+escape(spec)+'</span>':'')+'</div><div class="track" data-track="'+m+'" role="group" aria-label="'+escape(detail || '无占用时段')+'">'+
-      block({s:0,e:pastEnd},'past','')+row.filter(r => r.e > pastEnd).map(r =>
-        block({...r,s:Math.max(r.s,pastEnd)},status(r)==='我的预约' ? 'mine' : 'booked',status(r),intervalDetail(r))).join('')+
+      block({s:0,e:pastEnd},'past','')+row.filter(r => r.e > pastEnd).map(bookingBlock).join('')+
       (draft?.m === m && valid(draft) ? draftBlock(draft) : '')+
       (releaseRange ? block(releaseRange,'release-draft','') : '')+'</div></div>';
   }
@@ -173,7 +188,7 @@
   }
 
   function schedule() {
-    const labels = [['','可预约'],['booked','已预约'],['mine','我的预约'],['past','已过去'],['draft','待提交']];
+    const labels = [['','可预约'],['booked','他人预约（按人着色）'],['mine','我的预约'],['past','已过去'],['draft','待提交']];
     return '<div class="intro"><div><h1>机器预约</h1><p class="quiet" id="npu-window">'+windowLabel()+
       '</p></div><div class="legend" aria-label="时段图例">'+
       labels.map(([key,label])=>'<span><b class="swatch '+key+'"></b>'+label+'</span>').join('')+'</div></div>'+
@@ -508,8 +523,17 @@
     preview?.remove();
     const candidate = {m:Number(track.dataset.track),s:Math.min(s,end),e:Math.max(s,end)+1};
     const own = ownRange(candidate);
-    if (own) beginRelease(own,s===end ? null : candidate);
-    else select(candidate);
+    if (own) {
+      beginRelease(own,s===end ? null : candidate);
+      return;
+    }
+    const occupied = s===end && s>=pastEnd ? hit(candidate) : null;
+    if (occupied) {
+      say(intervalDetail(occupied));
+      patch({board:false,form:false});
+    } else {
+      select(candidate);
+    }
   });
   root.addEventListener('pointercancel', event => {
     if (drag?.id !== event.pointerId) return;

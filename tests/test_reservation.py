@@ -109,6 +109,16 @@ class ReservationTests(Fixture):
         self.book(self.bob, 6, 8)
         self.assertNotIn("owner", self.store.state(self.bob)["records"][0])
 
+    def test_other_viewers_can_distinguish_adjacent_owners(self):
+        self.book(self.alice, 4, 5)
+        self.book(self.bob, 5, 6)
+        viewer, state = self.store.login({"username": "c12345678"})
+        records = self.store.state(viewer)["records"]
+        self.assertEqual([r["operatorUsername"] for r in records], [ALICE["username"], BOB["username"]])
+        self.assertEqual(len({r["operatorId"] for r in records}), 2)
+        self.assertTrue(all("owner" not in record for record in records))
+        self.assertEqual(state["upcoming"], [])
+
     def test_history_bounds_pagination_and_retired_machine(self):
         alice_id = self.store.state(self.alice)["user"]["id"]
         with self.store.transaction(write=True) as db:

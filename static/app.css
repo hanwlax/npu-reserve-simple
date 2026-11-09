@@ -15,8 +15,7 @@ body {margin:0;background:light-dark(#f4f6fa,#111621)}
   --accent:light-dark(#214fca,#9bb6ff);
   --action:light-dark(#234fca,#3b65d8);
   --selection:light-dark(#e5edff,#293e68);
-  --booked:light-dark(#eee7fa,#3f3157);
-  --booked-ink:light-dark(#5c397c,#ecd9ff);
+  --booked-ink:light-dark(#182338,#f3f6ff);
   --mine:light-dark(#d9f0e6,#23483d);
   --mine-ink:light-dark(#205d45,#b5f1d7);
   --past:light-dark(#eef1f5,#212837);
@@ -51,12 +50,16 @@ body {margin:0;background:light-dark(#f4f6fa,#111621)}
 #npu-reserve .legend {display:flex;align-items:center;flex-wrap:wrap;gap:8px 13px;color:var(--muted);font-size:12px}
 #npu-reserve .legend span {display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
 #npu-reserve .swatch {width:12px;height:12px;border:1px solid var(--line);border-radius:3px;background:var(--surface)}
-#npu-reserve :is(.swatch,.block).booked {background:var(--booked);color:var(--booked-ink)}
+#npu-reserve .swatch.booked {background:linear-gradient(115deg,light-dark(#baacf1,#584585) 50%,light-dark(#efb1a7,#803e4b) 50%)}
+#npu-reserve .block.booked {
+  background:light-dark(hsl(var(--booking-hue,265) 64% 78%),hsl(var(--booking-hue,265) 50% 31%));
+  color:var(--booked-ink);
+}
 #npu-reserve :is(.swatch,.block).mine {background:var(--mine);color:var(--mine-ink)}
 #npu-reserve :is(.swatch,.block).past {background:var(--past);color:var(--muted)}
 #npu-reserve :is(.swatch,.block).draft {background:var(--selection);color:var(--accent);border:1px solid var(--accent)}
 #npu-reserve .board {background:var(--surface);border:1px solid var(--line);border-radius:9px;overflow:auto}
-#npu-reserve .board-grid {min-width:670px}
+#npu-reserve .board-grid {min-width:calc(var(--rowhead) + 672px)}
 #npu-reserve .board-row {display:grid;grid-template-columns:var(--rowhead) minmax(0,1fr);border-bottom:1px solid var(--line)}
 #npu-reserve .board-row:last-child {border-bottom:0}
 #npu-reserve .machine {position:sticky;left:0;z-index:2;background:var(--surface);border-right:1px solid var(--line);display:grid;align-content:center;padding:5px 11px;min-width:0}
@@ -71,10 +74,18 @@ body {margin:0;background:light-dark(#f4f6fa,#111621)}
 #npu-reserve .axis .first {left:5px!important;transform:none}
 #npu-reserve .axis .last {right:5px;transform:none}
 #npu-reserve .axis .midnight {color:var(--accent);font-weight:670}
-#npu-reserve .track {position:relative;min-height:49px;touch-action:pan-x pan-y;user-select:none;background-image:linear-gradient(to right,var(--line) 1px,transparent 1px);background-size:calc(100% / 12) 100%}
+#npu-reserve .track {position:relative;min-height:58px;touch-action:pan-x pan-y;user-select:none;background-image:linear-gradient(to right,var(--line) 1px,transparent 1px);background-size:calc(100% / 12) 100%}
 #npu-reserve .track::before {content:"";position:absolute;top:0;bottom:0;left:calc(200% / 3);border-left:1px dashed var(--accent);z-index:1;pointer-events:none}
 #npu-reserve .block {position:absolute;top:8px;bottom:8px;border-radius:4px;padding:0 4px;display:flex;align-items:center;justify-content:center;white-space:nowrap;overflow:hidden;font-size:11px;font-weight:620;pointer-events:none}
-#npu-reserve .block[title] {pointer-events:auto}
+#npu-reserve .block.booking {container-type:inline-size;flex-direction:column;gap:2px;padding:0;pointer-events:auto}
+#npu-reserve .booking-status {writing-mode:vertical-rl;text-orientation:upright;font-size:10px;line-height:1}
+#npu-reserve .booking-owner {display:none;line-height:1.15}
+@container (min-width:44px) {
+  #npu-reserve .booking-status {writing-mode:horizontal-tb;font-size:11px}
+}
+@container (min-width:74px) {
+  #npu-reserve .booking-owner {display:block}
+}
 #npu-reserve .block.release-draft {background:transparent;border:2px solid var(--danger)}
 #npu-reserve .block.past {top:0;bottom:0;border-radius:0}
 #npu-reserve .board-note {font-size:12px;color:var(--muted);margin-top:6px}
