@@ -1,0 +1,24 @@
+[Unit]
+Description=NPU machine-time reservation (simple)
+After=network.target
+
+[Service]
+Type=simple
+User=npu-reserve-simple
+Group=npu-reserve-simple
+WorkingDirectory=/opt/npu-reserve-simple
+StateDirectory=npu-reserve-simple
+StateDirectoryMode=0750
+UMask=0077
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-/etc/npu-reserve-simple.env
+ExecStart=/usr/bin/python3 /opt/npu-reserve-simple/server.py --db /var/lib/npu-reserve-simple/reservations.sqlite3 --config /var/lib/npu-reserve-simple/config.json serve
+Restart=on-failure
+RestartSec=3s
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+
+[Install]
+WantedBy=multi-user.target
