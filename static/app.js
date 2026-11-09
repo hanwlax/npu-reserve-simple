@@ -2,7 +2,6 @@
   const root = document.getElementById('npu-reserve');
   const workspace = root.querySelector('#npu-workspace');
   const identity = root.querySelector('#npu-identity');
-  const dialog = root.querySelector('#npu-dialog');
   let machines = {};
   let records = [];
   let upcoming = [];
@@ -53,7 +52,6 @@
 
   function chrome() {
     identity.innerHTML = !user ? '' : '<span class="pill small">'+escape(user.name)+'</span>' +
-      '<button class="link-button small" type="button" data-action="change-password">修改密码</button>'+
       '<button class="link-button small" type="button" data-action="logout">退出</button>';
   }
 
@@ -80,7 +78,7 @@
       escape(name)+'</button><span class="quiet small">'+escape(ip)+'</span>'+
       (spec?'<span class="quiet small">'+escape(spec)+'</span>':'')+'</div><div class="track" data-track="'+m+'" role="group" aria-label="'+escape(detail || '无占用时段')+'">'+
       block({s:0,e:pastEnd},'past','')+row.filter(r => r.e > pastEnd).map(r =>
-        block({...r,s:Math.max(r.s,pastEnd)},status(r)==='我的预约' ? 'mine' : r.kind,status(r),intervalDetail(r))).join('')+
+        block({...r,s:Math.max(r.s,pastEnd)},status(r)==='我的预约' ? 'mine' : 'booked',status(r),intervalDetail(r))).join('')+
       (draft?.m === m && valid(draft) ? draftBlock(draft) : '')+
       (releaseRange ? block(releaseRange,'release-draft','') : '')+'</div></div>';
   }
@@ -220,27 +218,16 @@
   }
 
   function login() {
-    return '<form class="panel login" id="npu-login"><h1>登录</h1>'+
-      '<div data-login-notice aria-live="polite">'+noticeHTML()+'</div><label class="field">工号<input name="username" required maxlength="9" pattern="[A-Za-z][0-9]{8}" autocomplete="username" placeholder="例如 h00893113"></label>'+
-      '<label class="field">密码<input name="password" type="password" required maxlength="128" autocomplete="current-password"></label>'+
-      saveButton('登录')+'<div class="controls login-footer"><span class="quiet small">还没有账户？</span>'+
-      '<button class="link-button small" type="button" data-action="show-registration">注册</button></div></form>';
-  }
-
-  function registration() {
-    return '<form class="panel login" id="npu-registration"><h1>注册</h1>'+
-      '<p class="quiet">一个英文字母加八位数字，注册后即可预约。</p>'+
-      '<div class="create-notice" aria-live="polite">'+noticeHTML()+'</div>'+
+    return '<form class="panel login" id="npu-login"><h1>工号登录</h1>'+
+      '<p class="quiet">请输入你本人的工号。</p>'+
+      '<div data-login-notice aria-live="polite">'+noticeHTML()+'</div>'+
       '<label class="field">工号<input name="username" required maxlength="9" pattern="[A-Za-z][0-9]{8}" '+
-      'autocomplete="username" placeholder="例如 h00893113"></label>'+
-      '<label class="field">显示名（选填）<input name="name" maxlength="24" placeholder="同登录账户"></label>'+
-      passwordFields('密码',true)+
-      '<div class="controls">'+saveButton('注册并登录')+button('back-to-login','返回登录')+'</div></form>';
+      'autocomplete="username" placeholder="例如 h00893113"></label>'+saveButton('登录')+'</form>';
   }
 
   function render() {
     chrome();
-    const pages = {login,registration,booking:schedule,history:historyPage};
+    const pages = {login,booking:schedule,history:historyPage};
     const nav = user ? '<nav class="nav" aria-label="预约菜单">'+
       [['booking','机器预约'],['history','历史预约']].map(([key,label]) =>
         '<button type="button" data-page="'+key+'" aria-pressed="'+(view===key)+'">'+label+'</button>'
@@ -283,35 +270,6 @@
     releaseEditor = null;
   }
 
-  function passwordFields(label, canGenerate = false) {
-    return (canGenerate?'<label class="password-option"><input type="checkbox" name="generate"> 自动生成密码</label>':'')+
-      '<label class="field">'+label+
-      '<input name="password" type="password" minlength="8" maxlength="128" autocomplete="new-password" required></label>';
-  }
-
-  function passwordPayload(data) {
-    return data.has('generate') ? {generate:true} : {password:data.get('password')};
-  }
-
-  function showPasswordForm() {
-    dialog.innerHTML = '<form class="dialog-content" id="npu-password">'+
-      '<h2 id="npu-dialog-title">修改密码</h2><p id="npu-dialog-summary">保存后，其他会话会退出。</p>'+
-      '<div class="create-notice" aria-live="polite"></div>'+passwordFields('新密码')+
-      '<div class="controls">'+button('close-dialog','取消')+saveButton('修改密码')+'</div></form>';
-    dialog.showModal();
-  }
-
-  function showPasswordValue(title, summary, password) {
-    dialog.innerHTML = '<div class="dialog-content"><h2 id="npu-dialog-title">'+escape(title)+'</h2>'+
-      '<p id="npu-dialog-summary">'+escape(summary)+'</p>'+
-      '<label class="field">密码<input id="npu-visible-password" readonly value="'+escape(password)+'" autocomplete="off"></label>'+
-      '<div class="controls">'+button('close-dialog','完成','primary')+'</div></div>';
-    dialog.showModal();
-    const passwordField = dialog.querySelector('#npu-visible-password');
-    passwordField.focus();
-    passwordField.select();
-  }
-
   root.addEventListener('click', event => {
     const control = event.target.closest('button');
     if (!control || busy) return;
@@ -329,15 +287,11 @@
       return;
     }
     switch (data.action) {
-      case 'show-registration': reset(); view='registration'; render(); break;
-      case 'back-to-login': signedOut(); break;
       case 'refresh-history': loadHistory(1); break;
       case 'previous-history': loadHistory(history.page-1); break;
       case 'next-history': loadHistory(history.page+1); break;
       case 'cancel-release':
       case 'clear': reset(); patch(); break;
-      case 'close-dialog': closeDialog(); break;
-      case 'change-password': showPasswordForm(); break;
       case 'logout': run(async () => { await request('logout',{}); signedOut(); }); break;
       case 'select-machine': {
         const m = Number(data.machine);
@@ -356,13 +310,6 @@
 
   root.addEventListener('change', event => {
     const form = event.target.form;
-    if (event.target.name==='generate' && form?.id==='npu-registration') {
-      const input = form.elements.password;
-      input.disabled = event.target.checked;
-      input.required = !event.target.checked;
-      input.parentElement.hidden = event.target.checked;
-      if (!event.target.checked) input.focus();
-    }
     if (form?.id === 'npu-release') {
       readRelease(new FormData(form));
       form.querySelector('.release-fields').hidden = releaseEditor.mode !== 'partial';
@@ -381,16 +328,6 @@
   function readDraft(data) {
     return {m:draft.m,s:Number(data.get('start')),e:Number(data.get('end'))};
   }
-
-  function closeDialog() {
-    dialog.close();
-    dialog.innerHTML = '';
-  }
-
-  dialog.addEventListener('cancel', event => {
-    event.preventDefault();
-    closeDialog();
-  });
 
   function remainingRanges(record, candidate) {
     const cut = intersection(record,candidate);
@@ -417,11 +354,10 @@
   function applyState(state) {
     ({user,records,upcoming,pastEnd,cutoff,revision,window:windowStart} = state);
     machines = Object.fromEntries(state.machines.map(machine => [machine.id,machine]));
-    if (view==='login' || view==='registration') view = 'booking';
+    if (view==='login') view = 'booking';
   }
 
   function signedOut(message) {
-    if (dialog.open) closeDialog();
     reset();
     user = null;
     view = 'login';
@@ -468,7 +404,7 @@
 
   function showError(message, form) {
     say(message,true);
-    const target = form?.querySelector('.create-notice, [data-login-notice]');
+    const target = form?.querySelector('[data-login-notice]');
     if (target) target.innerHTML = noticeHTML();
     else if (onBoard()) patch({board:false,form:false});
     else workspace.querySelector('[aria-live]').innerHTML = noticeHTML();
@@ -477,7 +413,6 @@
   function save(action, payload, form) {
     return run(async () => {
       const {state,message} = await request(action,payload);
-      if (form?.id==='npu-password') closeDialog();
       applyState(state);
       reset();
       say(message);
@@ -497,18 +432,6 @@
         reset();
         render();
       },form);
-    } else if (form.id==='npu-registration') {
-      run(async () => {
-        const {state,generatedPassword} = await request('register',{
-          ...passwordPayload(data),username:data.get('username'),name:data.get('name')
-        });
-        applyState(state);
-        reset();
-        render();
-        if (generatedPassword) showPasswordValue('自动生成的密码','请保存密码，下次登录时使用。',generatedPassword);
-      },form);
-    } else if (form.id==='npu-password') {
-      save('change-password',{password:data.get('password')},form);
     } else if (form.id==='npu-release') {
       const record = releaseEditor?.record;
       if (!upcoming.includes(record) || !machines[record.m]) return;
@@ -538,12 +461,12 @@
   }
 
   async function pollBoard() {
-    if (busy || polling || !onBoard() || draft || releaseEditor || drag || dialog.open) return;
+    if (busy || polling || !onBoard() || draft || releaseEditor || drag) return;
     const before = user;
     polling = true;
     try {
       const state = await request('state');
-      if (before===user && onBoard() && !busy && !draft && !releaseEditor && !drag && !dialog.open &&
+      if (before===user && onBoard() && !busy && !draft && !releaseEditor && !drag &&
           (state.revision!==revision || state.window!==windowStart || state.pastEnd!==pastEnd || state.cutoff!==cutoff)) {
         applyState(state);
         patch();

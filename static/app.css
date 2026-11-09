@@ -101,11 +101,6 @@ body {margin:0;background:light-dark(#f4f6fa,#111621)}
 #npu-reserve .checks legend {padding:0;margin-bottom:5px;font-weight:650}
 #npu-reserve .checks label {display:flex;gap:6px;align-items:center}
 #npu-reserve input[type=checkbox] {accent-color:var(--action)}
-#npu-reserve dialog {width:min(460px,calc(100% - 28px));max-height:calc(100% - 28px);padding:0;border:1px solid var(--line);border-radius:12px;background:var(--surface);color:var(--ink);box-shadow:0 16px 48px #08132938}
-#npu-reserve dialog::backdrop {background:#09142670}
-#npu-reserve .dialog-content {display:grid;gap:12px;padding:18px}
-#npu-reserve .dialog-content ul {margin:0;padding-left:22px}
-#npu-reserve .dialog-content .controls {justify-content:flex-end}
 #npu-reserve .history-table {overflow:auto}
 #npu-reserve .history-table table {border-collapse:collapse;width:100%;min-width:450px;text-align:left}
 #npu-reserve .history-table th,#npu-reserve .history-table td {padding:9px 8px;border-bottom:1px solid var(--line);overflow-wrap:anywhere}
@@ -113,9 +108,6 @@ body {margin:0;background:light-dark(#f4f6fa,#111621)}
 #npu-reserve .history-table tr:last-child > * {border-bottom:0}
 #npu-reserve .login {width:min(100%,365px);margin:20px auto}
 #npu-reserve .login .field input {width:100%}
-#npu-reserve .login-footer {justify-content:center;align-items:center}
-#npu-reserve .password-option {display:flex;align-items:center;gap:6px;justify-self:start}
-#npu-reserve .password-option input {margin:0}
 @media(max-width:680px) {
   #npu-reserve {--rowhead:140px;padding:0}
   #npu-reserve :is(.workspace,.topbar) {padding:13px}

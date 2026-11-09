@@ -6,7 +6,6 @@ import json
 import re
 import secrets
 import sqlite3
-import string
 import time
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -19,15 +18,16 @@ SESSION_SECONDS = 12 * 3600
 USERNAME = re.compile(r"[a-zA-Z][0-9]{8}")
 CONFIG_ID = re.compile(r"[a-zA-Z0-9_-]{1,48}")
 HISTORY_PAGE_SIZE = 100
-MUTATIONS = {"book": "book", "release": "release", "change-password": "change_password"}
+MUTATIONS = {"book": "book", "release": "release"}
 
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS accounts (
+ACCOUNT_FIELDS = """
     id INTEGER PRIMARY KEY,
     username TEXT NOT NULL UNIQUE,
-    name TEXT NOT NULL,
-    password TEXT NOT NULL
-);
+    name TEXT NOT NULL
+"""
+
+SCHEMA = f"""
+CREATE TABLE IF NOT EXISTS accounts ({ACCOUNT_FIELDS});
 CREATE TABLE IF NOT EXISTS sessions (
     token TEXT PRIMARY KEY,
     account_id INTEGER NOT NULL REFERENCES accounts(id),
@@ -91,22 +91,6 @@ def integer(data, key, *, minimum=0):
     if type(value) is not int or not minimum <= value <= 2**53 - 1:
         raise Error(422, f"{key} 必须为有效整数。")
     return value
-
-
-def password_hash(password, salt):
-    return hashlib.scrypt(password.encode(), salt=salt, n=16384, r=8, p=1).hex()
-
-
-def encode_password(password, *, minimum=8):
-    if not isinstance(password, str) or not minimum <= len(password) <= 128:
-        raise Error(422, f"密码需要 {minimum}–128 个字符。")
-    salt = secrets.token_bytes(16)
-    return salt.hex() + ":" + password_hash(password, salt)
-
-
-def generated_password():
-    alphabet = string.ascii_letters + string.digits
-    return "".join(secrets.choice(alphabet) for _ in range(8))
 
 
 def token_hash(token):
@@ -175,6 +159,7 @@ class Store:
                 raise ValueError("该数据库属于完整版，请为简版指定独立数据库。")
             db.execute("PRAGMA journal_mode=WAL")
             db.executescript(SCHEMA)
+            self.migrate_accounts(db)
         finally:
             db.close()
         with self.transaction(write=True) as db:
@@ -194,46 +179,34 @@ class Store:
             )
             self.bump(db)
 
-    def register(self, data, previous=None):
-        username = data.get("username")
-        if not isinstance(username, str) or not USERNAME.fullmatch(username):
-            raise Error(422, "用户名须为一个英文字母加八位数字，例如 h00893113。")
-        username = username.lower()
-        name = text(data, "name", 24, required=False) or username
-        generated = generated_password() if data.get("generate") is True else None
-        encoded = encode_password(generated or data.get("password"))
-        with self.transaction(write=True) as db:
-            if db.execute("SELECT 1 FROM accounts WHERE username=?", (username,)).fetchone():
-                raise Error(409, "该工号已注册，请登录。")
-            account = db.execute(
-                "INSERT INTO accounts(username,name,password) VALUES (?,?,?)", (username, name, encoded)
-            ).lastrowid
-            now = int(self.clock())
-            token = self.create_session(db, account, previous, now)
-            state = self.snapshot(db, {"id": account, "username": username, "name": name}, now)
-        result = {"state": state}
-        if generated is not None:
-            result["generatedPassword"] = generated
-        return token, result
+    @staticmethod
+    def migrate_accounts(db):
+        # This setup connection is separate from requests, which always enforce foreign keys.
+        db.execute("PRAGMA foreign_keys=OFF")
+        with db:
+            db.execute("BEGIN IMMEDIATE")
+            columns = {row[1] for row in db.execute("PRAGMA table_info(accounts)")}
+            if "password" not in columns:
+                return
+            db.execute(f"CREATE TABLE accounts_new ({ACCOUNT_FIELDS})")
+            db.execute("INSERT INTO accounts_new SELECT id,username,name FROM accounts")
+            db.execute("DROP TABLE accounts")
+            db.execute("ALTER TABLE accounts_new RENAME TO accounts")
+            if db.execute("PRAGMA foreign_key_check").fetchone() is not None:
+                raise ValueError("账户迁移后的外键校验失败，数据库未更新。")
 
     def login(self, data, previous=None):
-        username, password = data.get("username"), data.get("password")
-        if (not isinstance(username, str) or not USERNAME.fullmatch(username)
-                or not isinstance(password, str) or len(password) > 128):
-            raise Error(401, "工号或密码有误。")
-        with self.transaction() as db:
-            account = db.execute("SELECT * FROM accounts WHERE username=?", (username.lower(),)).fetchone()
-        salt, expected = account["password"].split(":") if account else ("00" * 16, "")
-        matches = secrets.compare_digest(password_hash(password, bytes.fromhex(salt)), expected)
-        if not account or not matches:
-            raise Error(401, "工号或密码有误。")
+        username = data.get("username")
+        if not isinstance(username, str) or not USERNAME.fullmatch(username):
+            raise Error(422, "工号须为一个英文字母加八位数字，例如 h00893113。")
+        username = username.lower()
         with self.transaction(write=True) as db:
-            current = db.execute("SELECT * FROM accounts WHERE id=?", (account["id"],)).fetchone()
-            if current is None or current["password"] != account["password"]:
-                raise Error(401, "工号或密码有误。")
+            db.execute("INSERT INTO accounts(username,name) VALUES (?,?) ON CONFLICT(username) DO NOTHING",
+                       (username, username))
+            account = db.execute("SELECT id,username,name FROM accounts WHERE username=?", (username,)).fetchone()
             now = int(self.clock())
             token = self.create_session(db, account["id"], previous, now)
-            state = self.snapshot(db, current, now)
+            state = self.snapshot(db, account, now)
         return token, state
 
     @staticmethod
@@ -314,21 +287,12 @@ class Store:
     def mutate(self, token, action, data):
         if action not in MUTATIONS:
             raise Error(404, "接口不存在。")
-        if action == "change-password":
-            with self.transaction() as db:
-                self.actor(db, token, int(self.clock()))
-            data = {"encoded": encode_password(data.get("password")), "session": token_hash(token)}
         with self.transaction(write=True) as db:
             now = int(self.clock())
             actor = self.actor(db, token, now)
             message = getattr(self, MUTATIONS[action])(db, actor, data, now)
             self.bump(db)
             return {"message": message, "state": self.snapshot(db, actor, now)}
-
-    def change_password(self, db, actor, data, now):
-        db.execute("UPDATE accounts SET password=? WHERE id=?", (data["encoded"], actor["id"]))
-        db.execute("DELETE FROM sessions WHERE account_id=? AND token<>?", (actor["id"], data["session"]))
-        return "密码已修改。"
 
     @staticmethod
     def selected_range(data, now, *, overnight=False):

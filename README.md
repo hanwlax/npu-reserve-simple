@@ -24,7 +24,7 @@ python3 server.py serve
 
 ## 预约操作
 
-1. 点击「注册」，输入一个英文字母加八位数字的工号，例如 `h00893113`。大小写视为同一工号。密码可自行设置（至少 8 个字符），也可自动生成。注册成功后自动登录，所有已登录用户可预约配置中的机器。
+1. 输入本人职工号即可登录，例如 `h00893113`。格式为一个英文字母加八位数字，大小写视为同一工号。首次登录会自动建立账户。服务仅校验工号格式，预约和释放权限按输入的工号识别。
 2. 在「机器预约」同一行点击或拖选空闲时段后提交。时间轴使用北京时间，从当天 08:00 到次日 08:00，以 30 分钟为单位。并发提交同一时段时，最先提交成功的一单生效。
 3. 在「我的预约」选择「释放机时」，可释放整段尚未使用的预约或仅释放一段。也可以直接拖选本人预约中的一段。
 4. 点击「历史预约」查看最近 7 天已经开始的预约，列表展示机器、预约人、起止时间和状态。正在使用的预约也会列出。开始前已释放的时段不会出现在历史中。
@@ -45,7 +45,7 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now npu-reserve-simple.service
 ```
 
-后续编辑 `/var/lib/npu-reserve-simple/config.json` 后，运行 `sudo systemctl restart npu-reserve-simple.service`。更新源码时重新安装 Python 和静态文件，再重启服务。若要改端口，可在 `/etc/npu-reserve-simple.env` 设置 `NPU_RESERVE_PORT=8081` 后重启。
+后续编辑 `/var/lib/npu-reserve-simple/config.json` 后，运行 `sudo systemctl restart npu-reserve-simple.service`。更新源码时重新安装 Python 和静态文件，再重启服务。旧版简版数据库会在启动时自动迁移，保留原工号、显示名和预约记录。若要改端口，可在 `/etc/npu-reserve-simple.env` 设置 `NPU_RESERVE_PORT=8081` 后重启。
 
 ## 打包迁移到另一台 Linux 主机
 

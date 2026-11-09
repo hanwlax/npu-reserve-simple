@@ -13,9 +13,8 @@ from threading import Barrier, Thread
 from reservation import BEIJING, DAY, SLOT, Error, Store, load_config
 from server import Server
 
-PASSWORD = "test-password"
-ALICE = {"username": "h00893113", "name": "用户甲", "password": PASSWORD}
-BOB = {"username": "a12345678", "name": "用户乙", "password": PASSWORD}
+ALICE = {"username": "h00893113"}
+BOB = {"username": "a12345678"}
 POOL = [{"id": "npu-01", "name": "机器一", "ip": "192.0.2.11"}]
 
 
@@ -31,10 +30,10 @@ class Fixture(unittest.TestCase):
         self.now = int(datetime(2026, 11, 9, 8, tzinfo=BEIJING).timestamp())
         self.store = Store(self.db, clock=lambda: self.now)
         self.configure(POOL)
-        self.alice, result = self.store.register(ALICE)
-        self.bob, _ = self.store.register(BOB)
-        self.machine = result["state"]["machines"][0]["id"]
-        self.window = result["state"]["window"]
+        self.alice, state = self.store.login(ALICE)
+        self.bob, _ = self.store.login(BOB)
+        self.machine = state["machines"][0]["id"]
+        self.window = state["window"]
 
     def configure(self, machines):
         self.config.write_text(json.dumps({"machines": machines}), encoding="utf-8")
@@ -48,24 +47,39 @@ class Fixture(unittest.TestCase):
 
 
 class ReservationTests(Fixture):
-    def test_registration_requires_employee_id_and_logs_in_immediately(self):
+    def test_employee_id_login_creates_or_reuses_the_account(self):
         for username in ("abcdefghi", "hh00893113", "h1234567", "h１２３４５６７８", " h12345678"):
             with self.assertRaises(Error) as invalid:
-                self.store.register({"username": username, "password": PASSWORD})
+                self.store.login({"username": username})
             self.assertEqual(invalid.exception.status, 422)
-        with self.assertRaises(Error) as duplicate:
-            self.store.register({"username": "H00893113", "password": PASSWORD})
-        self.assertEqual(duplicate.exception.status, 409)
-        with self.assertRaises(Error) as invalid_login:
-            self.store.login({"username": "admin", "password": PASSWORD})
-        self.assertEqual(invalid_login.exception.status, 401)
 
-        token, result = self.store.register({"username": "K87654321", "generate": True})
-        self.assertRegex(result["generatedPassword"], "^[A-Za-z0-9]{8}$")
-        self.assertEqual(self.store.state(token)["user"]["username"], "k87654321")
-        _, logged_in = self.store.login({"username": "K87654321", "password": result["generatedPassword"]})
-        self.assertEqual(logged_in["machines"], self.store.state(self.alice)["machines"])
-        self.assertNotIn("role", logged_in["user"])
+        token, state = self.store.login({"username": "K87654321"})
+        self.assertEqual(state["user"]["username"], "k87654321")
+        _, again = self.store.login({"username": "k87654321"}, previous=token)
+        self.assertEqual(again["user"], state["user"])
+        self.assertEqual(again["machines"], self.store.state(self.alice)["machines"])
+        with self.assertRaises(Error):
+            self.store.state(token)
+
+    def test_upgrade_removes_legacy_password_and_keeps_ownership(self):
+        booking = self.book(self.alice, 1, 4)["records"][0]
+        user_id = self.store.state(self.alice)["user"]["id"]
+        with self.store.transaction(write=True) as db:
+            db.execute("ALTER TABLE accounts ADD COLUMN password TEXT NOT NULL DEFAULT 'old-hash'")
+            db.execute("UPDATE accounts SET name=? WHERE id=?", ("原显示名", user_id))
+
+        self.store.initialize(load_config(self.config))
+        self.store.initialize(load_config(self.config))
+        with self.store.transaction() as db:
+            self.assertNotIn("password", {row["name"] for row in db.execute("PRAGMA table_info(accounts)")})
+            self.assertEqual(db.execute("PRAGMA foreign_key_check").fetchall(), [])
+        self.now += 2 * SLOT
+        token, state = self.store.login({"username": "H00893113"})
+        self.assertEqual(state["user"]["id"], user_id)
+        self.assertEqual(state["user"]["name"], "原显示名")
+        self.assertEqual(state["upcoming"][0]["id"], booking["id"])
+        self.assertEqual(self.store.history(token, 1)["records"][0]["name"], "原显示名")
+        self.store.mutate(token, "release", {**self.payload(2, 4), "id": booking["id"]})
 
     def test_concurrent_booking_allows_one_winner_and_adjacent_slots(self):
         barrier = Barrier(8)
@@ -139,13 +153,13 @@ class ReservationTests(Fixture):
         target = Store(new_dir / self.db.name, clock=lambda: self.now)
         target.initialize(load_config(new_dir / self.config.name))
         token, state = target.login(ALICE)
-        self.assertEqual(state["records"][0]["operator"], "用户甲")
+        self.assertEqual(state["records"][0]["operator"], ALICE["username"])
         self.assertEqual(state["upcoming"][0]["owner"], ALICE["username"])
         self.assertEqual(target.history(token, 1)["records"][0]["machine"], "机器一")
 
 
 class HTTPTests(Fixture):
-    def test_http_registration_booking_and_history(self):
+    def test_http_login_booking_and_history(self):
         try:
             server = Server(("127.0.0.1", 0), self.store)
         except OSError as error:
@@ -170,17 +184,18 @@ class HTTPTests(Fixture):
 
         self.assertEqual(request("/")[0], 200)
         self.assertEqual(request("/api/history")[0], 401)
-        self.assertEqual(request("/api/register", {"username": "invalid", "password": PASSWORD})[0], 422)
-        status, cookie, body = request("/api/register", {"username": "b87654321", "password": PASSWORD})
-        self.assertEqual(status, 201)
+        self.assertEqual(request("/api/login", {"username": "invalid"})[0], 422)
+        status, cookie, body = request("/api/login", {"username": "b87654321"})
+        self.assertEqual(status, 200)
         self.assertIn("npu_simple_session=", cookie)
         self.assertIn("HttpOnly; SameSite=Strict", cookie)
         cookie = cookie.split(";", 1)[0]
-        self.assertEqual(json.loads(body)["state"]["machines"][0]["id"], self.machine)
+        self.assertEqual(json.loads(body)["machines"][0]["id"], self.machine)
         self.assertEqual(request("/api/book", self.payload(1, 3), cookie)[0], 200)
         self.now += 2 * SLOT
         status, _, body = request("/api/history?page=1", cookie=cookie)
         self.assertEqual(status, 200)
         self.assertEqual(json.loads(body)["records"][0]["name"], "b87654321")
         self.assertEqual(request("/api/history?page=0", cookie=cookie)[0], 422)
-        self.assertEqual(request("/api/create-account", {}, cookie)[0], 404)
+        for path in ("/api/register", "/api/change-password", "/api/create-account"):
+            self.assertEqual(request(path, {}, cookie)[0], 404)

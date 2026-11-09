@@ -36,7 +36,6 @@ class Server(ThreadingHTTPServer):
         self.login_attempts = defaultdict(deque)
         self.login_lock = Lock()
         self.workers = BoundedSemaphore(32)
-        self.password_workers = BoundedSemaphore(4)
         super().__init__(address, Handler)
 
     def process_request(self, request, client_address):
@@ -68,7 +67,7 @@ class Server(ThreadingHTTPServer):
                     del self.login_attempts[address]
             attempts = self.login_attempts[peer]
             if len(attempts) >= 60:
-                raise Error(429, "登录或注册尝试过多，请稍后再试。")
+                raise Error(429, "登录尝试过多，请稍后再试。")
             attempts.append(now)
 
 
@@ -170,24 +169,13 @@ class Handler(BaseHTTPRequestHandler):
             store = self.server.store
             if action == "login":
                 self.server.limit_auth(self.client_address[0])
-                with self.server.password_workers:
-                    session, state = store.login(data, token)
+                session, state = store.login(data, token)
                 self.json_response(200, state, self.cookie_header(session, SESSION_SECONDS))
-            elif action == "register":
-                self.server.limit_auth(self.client_address[0])
-                with self.server.password_workers:
-                    session, result = store.register(data, token)
-                self.json_response(201, result, self.cookie_header(session, SESSION_SECONDS))
             elif action == "logout":
                 store.logout(token)
                 self.json_response(200, {}, self.cookie_header("", 0))
             else:
-                if action == "change-password":
-                    with self.server.password_workers:
-                        result = store.mutate(token, action, data)
-                else:
-                    result = store.mutate(token, action, data)
-                self.json_response(200, result)
+                self.json_response(200, store.mutate(token, action, data))
         except (BrokenPipeError, ConnectionResetError):
             pass
         except Exception as error:
