@@ -203,14 +203,14 @@
       timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'
     });
     const stamp = time => format.format(time*1000);
-    const header = '<div class="intro"><div><h1>最近 7 天预约</h1>'+
-      (history?'<p class="quiet">'+stamp(history.from)+' – '+stamp(history.to)+' · 北京时间</p>':'')+
+    const header = '<div class="intro"><div><h1>历史预约</h1>'+
+      (history?'<p class="quiet">截至 '+stamp(history.to)+' · 北京时间</p>':'')+
       '</div>'+button('refresh-history','刷新')+'</div><div aria-live="polite">'+noticeHTML()+'</div>';
     if (!history) return header+'<p class="quiet">正在加载预约记录…</p>';
     if (!history.records.length) return header+'<section class="panel"><h2>没有预约记录</h2>'+
       (history.page>1?'<div>'+button('previous-history','上一页')+'</div>':'')+'</section>';
     const rows = history.records.map(record => '<tr><th scope="row">'+escape(record.machine)+
-      '<br><span class="quiet small">'+escape(record.ip)+'</span></th><td>'+escape(record.name)+'</td>'+
+      '<br><span class="quiet small">'+escape(record.ip)+(record.retired?' · 已移出资源池':'')+'</span></th><td>'+escape(record.name)+'</td>'+
       '<td>'+stamp(record.start)+'<br>'+stamp(record.end)+'</td><td>'+
       (record.end>history.to?'进行中':'已结束')+'</td></tr>').join('');
     return header+'<section class="panel"><div class="history-table"><table aria-label="历史预约">'+

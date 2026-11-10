@@ -16,7 +16,6 @@ DAY = 48 * SLOT
 BEIJING = timezone(timedelta(hours=8))
 SESSION_SECONDS = 12 * 3600
 USERNAME = re.compile(r"[a-zA-Z][0-9]{8}")
-CONFIG_ID = re.compile(r"[a-zA-Z0-9_-]{1,48}")
 HISTORY_PAGE_SIZE = 100
 MUTATIONS = {"book": "book", "release": "release"}
 
@@ -41,6 +40,7 @@ CREATE TABLE IF NOT EXISTS machines (
     spec TEXT NOT NULL,
     retired INTEGER NOT NULL DEFAULT 0
 );
+CREATE UNIQUE INDEX IF NOT EXISTS active_machine_ip ON machines(ip) WHERE retired=0;
 CREATE TABLE IF NOT EXISTS intervals (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     machine_id INTEGER NOT NULL REFERENCES machines(id),
@@ -50,6 +50,7 @@ CREATE TABLE IF NOT EXISTS intervals (
 );
 CREATE INDEX IF NOT EXISTS interval_machine_time ON intervals(machine_id, start, end);
 CREATE INDEX IF NOT EXISTS interval_end ON intervals(end);
+CREATE INDEX IF NOT EXISTS interval_history ON intervals(start DESC,id DESC);
 CREATE TRIGGER IF NOT EXISTS interval_no_overlap
 BEFORE INSERT ON intervals WHEN EXISTS (
     SELECT 1 FROM intervals
@@ -109,24 +110,23 @@ def load_config(path):
     data = json.loads(Path(path).read_text(encoding="utf-8-sig"))
     if not isinstance(data, dict) or not isinstance(data.get("machines"), list):
         raise ValueError("config.json 必须包含 machines 数组。")
-    machines, used_ids, used_ips = [], set(), set()
+    machines, used_ips = [], set()
     for number, item in enumerate(data["machines"], 1):
         if not isinstance(item, dict):
             raise ValueError(f"machines 第 {number} 项必须为对象。")
         try:
-            machine_id = text(item, "id", 48)
             name = text(item, "name", 48)
-            ip = str(ipaddress.ip_address(text(item, "ip", 45)))
+            raw_ip = text(item, "ip", 45)
+            if "%" in raw_ip:
+                raise ValueError("IP 地址不能带网卡区域标识")
+            ip = str(ipaddress.ip_address(raw_ip))
             spec = text(item, "spec", 80, required=False)
         except (Error, ValueError) as error:
             raise ValueError(f"machines 第 {number} 项无效：{error}") from None
-        if not CONFIG_ID.fullmatch(machine_id) or machine_id in used_ids:
-            raise ValueError(f"machines 第 {number} 项的 id 格式无效或重复。")
         if ip in used_ips:
             raise ValueError(f"machines 第 {number} 项的 IP 重复。")
-        used_ids.add(machine_id)
         used_ips.add(ip)
-        machines.append((machine_id, name, ip, spec))
+        machines.append((ip, name, spec))
     return machines
 
 
@@ -163,20 +163,21 @@ class Store:
         finally:
             db.close()
         with self.transaction(write=True) as db:
-            before = {row["config_id"]: row for row in db.execute("SELECT * FROM machines WHERE retired=0")}
+            before = {row["ip"]: row["id"] for row in db.execute("SELECT id,ip FROM machines WHERE retired=0")}
             configured = {machine[0] for machine in machines}
             _, cutoff = clock_window(int(self.clock()))
             for removed in before.keys() - configured:
-                machine = before[removed]["id"]
+                machine = before[removed]
                 records = db.execute("SELECT * FROM intervals WHERE machine_id=? AND end>?", (machine, cutoff)).fetchall()
                 for record in records:
                     self.cut(db, record, cutoff, record["end"])
                 db.execute("UPDATE machines SET retired=1 WHERE id=?", (machine,))
-            db.executemany(
-                "INSERT INTO machines(config_id,name,ip,spec) VALUES (?,?,?,?) "
-                "ON CONFLICT(config_id) DO UPDATE SET name=excluded.name,ip=excluded.ip,spec=excluded.spec,retired=0",
-                machines,
-            )
+            for ip, name, spec in machines:
+                if ip in before:
+                    db.execute("UPDATE machines SET name=?,spec=? WHERE id=?", (name, spec, before[ip]))
+                else:
+                    db.execute("INSERT INTO machines(config_id,name,ip,spec) VALUES (?,?,?,?)",
+                               (secrets.token_hex(16), name, ip, spec))
             self.bump(db)
 
     @staticmethod
@@ -277,12 +278,12 @@ class Store:
             now = int(self.clock())
             self.actor(db, token, now)
             rows = db.execute(
-                "SELECT i.id,i.start,i.end,m.name AS machine,m.ip,a.name "
+                "SELECT i.id,i.start,i.end,m.name AS machine,m.ip,m.retired,a.name "
                 "FROM intervals i JOIN machines m ON m.id=i.machine_id JOIN accounts a ON a.id=i.owner_id "
-                "WHERE i.start<? AND i.end>? ORDER BY i.start DESC,i.id DESC LIMIT ? OFFSET ?",
-                (now, now - 7 * DAY, HISTORY_PAGE_SIZE + 1, (page - 1) * HISTORY_PAGE_SIZE),
+                "WHERE i.start<? ORDER BY i.start DESC,i.id DESC LIMIT ? OFFSET ?",
+                (now, HISTORY_PAGE_SIZE + 1, (page - 1) * HISTORY_PAGE_SIZE),
             ).fetchall()
-            return {"from": now - 7 * DAY, "to": now, "page": page, "hasMore": len(rows) > HISTORY_PAGE_SIZE,
+            return {"to": now, "page": page, "hasMore": len(rows) > HISTORY_PAGE_SIZE,
                     "records": [dict(row) for row in rows[:HISTORY_PAGE_SIZE]]}
 
     def mutate(self, token, action, data):

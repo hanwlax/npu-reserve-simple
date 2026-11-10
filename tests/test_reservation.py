@@ -15,7 +15,7 @@ from server import Server
 
 ALICE = {"username": "h00893113"}
 BOB = {"username": "a12345678"}
-POOL = [{"id": "npu-01", "name": "机器一", "ip": "192.0.2.11"}]
+POOL = [{"name": "机器一", "ip": "192.0.2.11"}]
 
 
 class Fixture(unittest.TestCase):
@@ -119,7 +119,7 @@ class ReservationTests(Fixture):
         self.assertTrue(all("owner" not in record for record in records))
         self.assertEqual(state["upcoming"], [])
 
-    def test_history_bounds_pagination_and_retired_machine(self):
+    def test_history_includes_older_records_and_retired_machine(self):
         alice_id = self.store.state(self.alice)["user"]["id"]
         with self.store.transaction(write=True) as db:
             for slot in range(-7 * 48 - 1, -7 * 48 + 102):
@@ -127,33 +127,52 @@ class ReservationTests(Fixture):
                 self.store.insert_interval(db, self.machine, start, start + SLOT, alice_id)
         self.book(self.alice, 6, 10)
         history = self.store.history(self.bob, 1)
-        self.assertEqual(history["from"], self.now - 7 * DAY)
         self.assertEqual(len(history["records"]), 100)
         self.assertTrue(history["hasMore"])
         remainder = self.store.history(self.bob, 2)
-        self.assertEqual(len(remainder["records"]), 2)
+        self.assertEqual(len(remainder["records"]), 3)
         self.assertFalse(remainder["hasMore"])
-        self.assertEqual(remainder["records"][-1]["start"], self.now - 7 * DAY)
+        self.assertEqual(remainder["records"][-1]["start"], self.now - 7 * DAY - SLOT)
         self.assertNotIn("username", history["records"][0])
         self.assertTrue(all(record["start"] < self.now for record in history["records"]))
         self.configure([])
         self.assertEqual(self.store.state(self.alice)["machines"], [])
         self.assertEqual(self.store.state(self.alice)["upcoming"], [])
-        self.assertEqual(self.store.history(self.alice, 1)["records"][0]["machine"], "机器一")
+        old = self.store.history(self.alice, 1)["records"][0]
+        self.assertEqual(old["machine"], "机器一")
+        self.assertEqual(old["retired"], 1)
         with self.assertRaises(Error):
             self.store.history(None, 1)
 
-    def test_config_validation_and_stable_machine_identity(self):
+    def test_config_matches_active_ip_and_ignores_legacy_id(self):
         self.book(self.alice, 6, 8)
-        self.configure([{**POOL[0], "name": "新名称", "ip": "192.0.2.22"}])
+        self.configure([{**POOL[0], "id": "legacy", "name": "新名称"}])
         state = self.store.state(self.alice)
         self.assertEqual(state["machines"][0]["id"], self.machine)
         self.assertEqual(state["machines"][0]["name"], "新名称")
         self.assertEqual(state["records"][0]["m"], self.machine)
-        for machines in ([POOL[0], POOL[0]], [POOL[0], {**POOL[0], "id": "another"}], [{**POOL[0], "ip": "bad"}]):
+        for machines in (
+            [POOL[0], POOL[0]], [{**POOL[0], "ip": "bad"}],
+            [{**POOL[0], "ip": "2001:db8::1"}, {**POOL[0], "ip": "2001:0db8:0:0:0:0:0:1"}],
+        ):
             with self.assertRaises(ValueError):
                 self.configure(machines)
         self.assertEqual(self.store.state(self.alice)["machines"][0]["name"], "新名称")
+
+    def test_replacement_with_reused_id_or_ip_preserves_old_history(self):
+        self.configure([{**POOL[0], "id": "legacy"}])
+        self.book(self.alice, 0, 4)
+        self.now += 2 * SLOT
+        self.configure([{**POOL[0], "id": "legacy", "name": "替换机", "ip": "192.0.2.22"}])
+        replacement = self.store.state(self.alice)
+        self.assertNotEqual(replacement["machines"][0]["id"], self.machine)
+        self.assertEqual(replacement["records"], [])
+        self.configure([{**POOL[0], "name": "新机器复用 IP"}])
+        active, = self.store.state(self.alice)["machines"]
+        self.assertNotEqual(active["id"], self.machine)
+        old, = self.store.history(self.alice, 1)["records"]
+        self.assertEqual((old["machine"], old["ip"], old["retired"]), ("机器一", "192.0.2.11", 1))
+        self.assertEqual(old["end"], self.now)
 
     def test_migration_with_config_and_database(self):
         self.book(self.alice, 1, 3)
